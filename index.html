@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fruit Ninja Gesture Pro</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- Камера и Холст -->
+        <video id="input_video" playsinline></video>
+        <canvas id="game_canvas"></canvas>
+
+        <!-- Интерфейс (HUD) -->
+        <div id="hud">
+            <div class="score-box">Очки: <span id="score">0</span></div>
+            <div id="stats-center">
+                <div id="timer" class="hidden">60</div>
+                <div id="lives">❤️❤️❤️</div>
+            </div>
+            <button id="mute-btn">🔊</button>
+        </div>
+
+        <!-- Комбо-текст -->
+        <div id="combo-display"></div>
+
+        <!-- Главное меню -->
+        <div id="menu" class="overlay">
+            <h1>FRUIT GESTURE NINJA</h1>
+            <div class="modes">
+                <button onclick="startGame('classic')">Классика (3 жизни)</button>
+                <button onclick="startGame('timed')">На время (60 сек)</button>
+                <button onclick="startGame('zen')">Дзен (без бомб)</button>
+            </div>
+            <p class="hint">Управляйте указательным пальцем перед камерой</p>
+        </div>
+
+        <!-- Экран проигрыша -->
+        <div id="game-over" class="overlay hidden">
+            <h2 id="over-reason">ИГРА ОКОНЧЕНА</h2>
+            <p>Ваш результат: <span id="final-score">0</span></p>
+            <button onclick="location.reload()">В меню</button>
+        </div>
+
+        <div id="loading">Загрузка ИИ...</div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
