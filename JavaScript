@@ -1,0 +1,301 @@
+const videoElement = document.getElementById('input_video');
+const canvasElement = document.getElementById('game_canvas');
+const ctx = canvasElement.getContext('2d');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const timerEl = document.getElementById('timer');
+const comboEl = document.getElementById('combo-display');
+
+// Настройки игры
+let gameActive = false;
+let score = 0;
+let lives = 3;
+let timeLeft = 60;
+let mode = 'classic';
+let isMuted = false;
+let objects = [];
+let particles = [];
+let slicedHalves = [];
+let fingerPos = { x: 0, y: 0, active: false };
+let trail = [];
+
+// Аудио (синтезируем звуки, чтобы не искать файлы)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSound(freq, type, duration) {
+    if (isMuted) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+// Переключение звука
+document.getElementById('mute-btn').onclick = () => {
+    isMuted = !isMuted;
+    document.getElementById('mute-btn').innerText = isMuted ? '🔇' : '🔊';
+};
+
+// Классы объектов
+class GameObject {
+    constructor(isBomb = false) {
+        this.x = Math.random() * canvasElement.width;
+        this.y = canvasElement.height + 50;
+        this.isBomb = isBomb;
+        this.radius = isBomb ? 35 : 40;
+        this.speedY = -(Math.random() * 5 + 12);
+        this.speedX = (this.x < canvasElement.width / 2 ? 1 : -1) * (Math.random() * 3);
+        this.gravity = 0.15;
+        this.color = isBomb ? '#333' : `hsl(${Math.random() * 360}, 80%, 50%)`;
+        this.angle = 0;
+        this.rotSpeed = Math.random() * 0.1 - 0.05;
+    }
+
+    update() {
+        this.y += this.speedY;
+        this.x += this.speedX;
+        this.speedY += this.gravity;
+        this.angle += this.rotSpeed;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.beginPath();
+        if (this.isBomb) {
+            ctx.fillStyle = '#111';
+            ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'red'; // Фитиль
+            ctx.fillRect(-2, -this.radius-10, 4, 10);
+        } else {
+            ctx.fillStyle = this.color;
+            ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            // Блик
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.arc(-10, -10, this.radius/3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+// Система комбо
+let comboCount = 0;
+let comboTimer = 0;
+
+function checkSlice() {
+    if (!fingerPos.active) return;
+    
+    let slicedThisFrame = 0;
+
+    for (let i = objects.length - 1; i >= 0; i--) {
+        let obj = objects[i];
+        let d = Math.hypot(obj.x - fingerPos.x, obj.y - fingerPos.y);
+
+        if (d < obj.radius) {
+            if (obj.isBomb) {
+                handleBomb();
+            } else {
+                sliceFruit(obj);
+                slicedThisFrame++;
+            }
+            objects.splice(i, 1);
+        }
+    }
+
+    if (slicedThisFrame > 0) {
+        comboCount += slicedThisFrame;
+        comboTimer = 20; // Кадров на продолжение комбо
+        if (comboCount >= 2) showCombo(comboCount);
+        score += slicedThisFrame * comboCount;
+        scoreEl.innerText = score;
+    }
+}
+
+function sliceFruit(obj) {
+    playSound(400 + Math.random() * 600, 'triangle', 0.1);
+    if (navigator.vibrate) navigator.vibrate(20);
+
+    // Создаем половинки
+    for (let i = 0; i < 2; i++) {
+        slicedHalves.push({
+            x: obj.x, y: obj.y,
+            sx: (i === 0 ? -2 : 2), sy: -2,
+            color: obj.color, life: 1.0, r: obj.radius
+        });
+    }
+
+    // Брызги
+    for (let i = 0; i < 15; i++) {
+        particles.push({
+            x: obj.x, y: obj.y,
+            vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12,
+            color: obj.color, size: Math.random()*8, life: 1.0
+        });
+    }
+}
+
+function handleBomb() {
+    playSound(100, 'sawtooth', 0.5);
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+    
+    if (mode === 'classic') {
+        endGame("ВЗРЫВ БОМБЫ!");
+    } else if (mode === 'timed') {
+        score = Math.max(0, score - 50);
+        scoreEl.innerText = score;
+    }
+}
+
+function showCombo(count) {
+    comboEl.innerText = `🔥 COMBO x${count}`;
+    comboEl.style.opacity = 1;
+    setTimeout(() => comboEl.style.opacity = 0, 800);
+}
+
+// Главный цикл отрисовки
+function onResults(results) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const finger = results.multiHandLandmarks[0][8];
+        fingerPos.x = finger.x * canvasElement.width;
+        fingerPos.y = finger.y * canvasElement.height;
+        fingerPos.active = true;
+        
+        trail.push({x: fingerPos.x, y: fingerPos.y});
+        if (trail.length > 8) trail.shift();
+    } else {
+        fingerPos.active = false;
+        trail = [];
+    }
+
+    if (!gameActive) return;
+
+    // Рисуем "лезвие"
+    if (trail.length > 1) {
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 6;
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for(let p of trail) ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+    }
+
+    checkSlice();
+
+    // Обновляем объекты
+    if (Math.random() < 0.03 + (score/5000)) {
+        let isBomb = (mode !== 'zen' && Math.random() < 0.2);
+        objects.push(new GameObject(isBomb));
+    }
+
+    objects.forEach((obj, i) => {
+        obj.update();
+        obj.draw();
+        if (obj.y > canvasElement.height + 100) {
+            if (!obj.isBomb && mode === 'classic' && obj.y > canvasElement.height + 50) {
+                lives--;
+                updateLives();
+            }
+            objects.splice(i, 1);
+        }
+    });
+
+    // Отрисовка брызг и половинок
+    drawEffects();
+
+    if (comboTimer > 0) comboTimer--;
+    else comboCount = 0;
+}
+
+function drawEffects() {
+    // Половинки фруктов
+    for (let i = slicedHalves.length - 1; i >= 0; i--) {
+        let h = slicedHalves[i];
+        h.x += h.sx; h.y += h.sy; h.sy += 0.2; h.life -= 0.02;
+        ctx.globalAlpha = h.life;
+        ctx.fillStyle = h.color;
+        ctx.beginPath();
+        ctx.arc(h.x, h.y, h.r, 0, Math.PI); // Рисуем полукруг
+        ctx.fill();
+        if (h.life <= 0) slicedHalves.splice(i, 1);
+    }
+
+    // Сок/брызги
+    particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+        if (p.life <= 0) particles.splice(i, 1);
+    });
+    ctx.globalAlpha = 1;
+}
+
+function updateLives() {
+    livesEl.innerText = "❤️".repeat(lives);
+    if (lives <= 0) endGame("ЗАКОНЧИЛИСЬ ЖИЗНИ");
+}
+
+function startGame(m) {
+    mode = m;
+    score = 0;
+    lives = 3;
+    timeLeft = 60;
+    gameActive = true;
+    objects = [];
+    document.getElementById('menu').classList.add('hidden');
+    document.getElementById('game-over').classList.add('hidden');
+    
+    timerEl.classList.toggle('hidden', mode !== 'timed');
+    livesEl.classList.toggle('hidden', mode !== 'classic');
+
+    if (mode === 'timed') {
+        const timerInterval = setInterval(() => {
+            if (!gameActive) clearInterval(timerInterval);
+            timeLeft--;
+            timerEl.innerText = timeLeft;
+            if (timeLeft <= 0) endGame("ВРЕМЯ ВЫШЛО");
+        }, 1000);
+    }
+}
+
+function endGame(reason) {
+    gameActive = false;
+    document.getElementById('game-over').classList.remove('hidden');
+    document.getElementById('over-reason').innerText = reason;
+    document.getElementById('final-score').innerText = score;
+}
+
+// MediaPipe Setup
+const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
+hands.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => { await hands.send({image: videoElement}); },
+    width: 1280, height: 720
+});
+
+camera.start().then(() => {
+    document.getElementById('loading').style.display = 'none';
+});
+
+// Resize canvas
+function resize() {
+    canvasElement.width = window.innerWidth;
+    canvasElement.height = window.innerHeight;
+}
+window.onresize = resize;
+resize();
